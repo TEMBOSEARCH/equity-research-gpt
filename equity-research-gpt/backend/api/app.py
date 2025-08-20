@@ -14,15 +14,14 @@ Base.metadata.create_all(bind=engine)
 import os, sys
 from fastapi import HTTPException
 
-# Pfad zum Crawler-Paket hinzufügen (../crawler)
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'crawler'))
+# Pfad so setzen, dass 'crawler.providers.northdata' importierbar ist
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
-try:
-    from providers.northdata import run_delta
-except Exception as e:
-    raise RuntimeError(f"Could not import crawler: {e}")
+from crawler.providers.northdata import run_delta  # <- WICHTIG: mit 'crawler.' Präfix
 
-RUN_TOKEN = os.getenv("RUN_TOKEN")  # kommt aus Render → Environment
+RUN_TOKEN = os.getenv("RUN_TOKEN")
 
 @app.post("/admin/run-crawler")
 def run_crawler(limit: int = 20, token: str | None = None):
