@@ -10,5 +10,27 @@ from schemas import CompanyOut, FilingOut
 
 app = FastAPI(title="Equity Research API")
 Base.metadata.create_all(bind=engine)
+# --- Crawler-Trigger (kostenlos statt Render-Cron) ---
+import os, sys
+from fastapi import HTTPException
+
+# Pfad zum Crawler-Paket hinzufügen:
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'crawler'))
+
+try:
+    from providers.northdata import run_delta
+except Exception as e:
+    # Wenn Import fehlschlägt, klare Fehlermeldung geben
+    raise RuntimeError(f"Could not import crawler: {e}")
+
+RUN_TOKEN = os.getenv("RUN_TOKEN")  # simpler Schutz
+
+@app.post("/admin/run-crawler")
+def run_crawler(limit: int = 20, token: str | None = None):
+    if RUN_TOKEN and token != RUN_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    run_delta(limit=limit)
+    return {"status": "crawler_ok", "limit": limit}
+
 
 
