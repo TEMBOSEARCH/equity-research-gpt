@@ -2,16 +2,18 @@ name: Run Crawler every 2h
 
 on:
   schedule:
-    - cron: "0 */2 * * *"   # alle 2 Stunden
-  workflow_dispatch:        # erlaubt manuelles Starten
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
 
 jobs:
   run-crawler:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Call Render Crawler Endpoint
+      - name: Call /admin/run-crawler
         run: |
-          curl -X POST "  https://equity-research-gpt.onrender.com/admin/run-crawler" \
-          -H "Authorization: Bearer ${{ secrets.RENDER_TOKEN }}"
-
+          set -e
+          URL="https://DEIN-SERVICE.onrender.com/admin/run-crawler?token=${{ secrets.RUN_TOKEN }}&limit=50"
+          CODE=$(curl -sS -o resp.json -w "%{http_code}" -X POST "$URL")
+          echo "HTTP $CODE"
+          cat resp.json || true
+          test "$CODE" = "200"
