@@ -1,0 +1,15 @@
+name: Run Crawler every 2h
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"   # alle 2 Stunden
+  workflow_dispatch:        # manuell starten möglich
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /admin/run-crawler
+        run: |
+          curl -sS -X POST \
+            "https://DEIN-SERVICE.onrender.com/admin/run-crawler?token=${{ secrets.RUN_TOKEN }}&limit=50"
