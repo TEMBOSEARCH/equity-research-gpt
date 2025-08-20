@@ -1,0 +1,13 @@
+# ... (Rest bleibt)
+from providers import northdata  # ensure __init__.py exists in providers
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-once", dest="run_once", action="store_true")
+    args = parser.parse_args()
+    if args.run_once:
+        run_once()             # bestehende Platzhalter (Bundesanzeiger/Northdata samples)
+        northdata.run_delta()  # echter North-Data Delta-Sync
+    else:
+        schedule()

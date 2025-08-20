@@ -1,0 +1,3 @@
+import streamlit as st
+st.title("Equity Research Dashboard")
+st.write("Hier könnte dein Screening erscheinen 🚀")

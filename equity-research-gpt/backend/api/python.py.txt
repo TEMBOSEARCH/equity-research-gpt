@@ -1,0 +1,52 @@
+from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, ForeignKey, Text, Index, UniqueConstraint
+from sqlalchemy.orm import relationship
+from .db import Base
+
+class Company(Base):
+    __tablename__ = "companies"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True, nullable=False)
+    country = Column(String, default="DE", index=True)
+    wz_code = Column(String, nullable=True, index=True)
+    hrb = Column(String, nullable=True)
+    isin = Column(String, nullable=True)
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
+    filings = relationship("Filing", back_populates="company")
+    __table_args__ = (Index("ix_companies_name_trgm", "name"),)
+
+class Filing(Base):
+    __tablename__ = "filings"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"), index=True, nullable=False)
+    source = Column(String, nullable=False, index=True)   # 'northdata' / 'bundesanzeiger'
+    filing_type = Column(String, index=True)              # 'annual_report' / 'capital_increase' / ...
+    filing_date = Column(Date, index=True)
+    url = Column(Text, nullable=True)
+    title = Column(Text, nullable=True)
+    ext_id = Column(String, nullable=True)                # North Data publication id
+    company = relationship("Company", back_populates="filings")
+    __table_args__ = (UniqueConstraint("source", "ext_id", name="uq_filings_source_extid"),)
+
+class IngestCursor(Base):
+    __tablename__ = "ingest_cursors"
+    id = Column(Integer, primary_key=True)
+    source = Column(String, unique=True, index=True)      # 'northdata'
+    last_timestamp = Column(DateTime, nullable=True)      # ISO timestamp of last successful fetch
+
+class Event(Base):
+    __tablename__ = "events"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"))
+    kind = Column(String, index=True)
+    event_date = Column(Date, index=True)
+    details = Column(Text, nullable=True)
+
+class Financial(Base):
+    __tablename__ = "financials"
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"))
+    year = Column(Integer, index=True)
+    revenue = Column(Numeric(18,2), nullable=True)
+    ebit = Column(Numeric(18,2), nullable=True)
+    employees = Column(Integer, nullable=True)

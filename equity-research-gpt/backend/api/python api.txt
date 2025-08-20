@@ -1,0 +1,94 @@
+from fastapi import FastAPI, Depends, Query
+from sqlalchemy import select, and_, or_
+from sqlalchemy.orm import Session
+from datetime import date
+from typing import List, Optional
+from .db import Base, engine, get_db
+from .models import Company, Filing
+from .schemas import CompanyOut, FilingOut
+
+app = FastAPI(title="Equity Research API")
+Base.metadata.create_all(bind=engine)
+
+@app.get("/companies", response_model=List[CompanyOut])
+def list_companies(
+    q: Optional[str] = Query(None, description="Name enthält"),
+    country: Optional[str] = None,
+    wz_code: Optional[str] = Query(None, alias="wz"),
+    limit: int = 200,
+    db: Session = Depends(get_db)
+):
+    stmt = select(Company)
+    if q:
+        stmt = stmt.where(Company.name.ilike(f"%{q}%"))
+    if country:
+        stmt = stmt.where(Company.country == country)
+    if wz_code:
+        stmt = stmt.where(Company.wz_code == wz_code)
+    rows = db.execute(stmt.limit(min(limit, 500))).scalars().all()
+    return rows
+
+@app.get("/filings", response_model=List[FilingOut])
+def list_filings(
+    company_id: Optional[int] = None,
+    filing_type: Optional[str] = None,
+    source: Optional[str] = None,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    q: Optional[str] = Query(None, description="Title contains"),
+    limit: int = 500,
+    db: Session = Depends(get_db)
+):
+    stmt = select(Filing)
+    if company_id: stmt = stmt.where(Filing.company_id == company_id)
+    if filing_type: stmt = stmt.where(Filing.filing_type == filing_type)
+    if source: stmt = stmt.where(Filing.source == source)
+    if start: stmt = stmt.where(Filing.filing_date >= start)
+    if end: stmt = stmt.where(Filing.filing_date <= end)
+    if q: stmt = stmt.where(Filing.title.ilike(f"%{q}%"))
+    rows = db.execute(stmt.limit(min(limit, 1000))).scalars().all()
+    return rows
+
+@app.get("/search")
+def search(q: str, db: Session = Depends(get_db), limit: int = 200):
+    stmt = (select(Filing).join(Company)
+            .where(or_(Company.name.ilike(f"%{q}%"), Filing.title.ilike(f"%{q}%"))))
+    rows = db.execute(stmt.limit(min(limit, 500))).scalars().all()
+    return [{"id": f.id, "company_id": f.company_id, "title": f.title,
+             "source": f.source, "filing_type": f.filing_type} for f in rows]
+from fastapi import HTTPException
+from .providers.northdata_client import NorthDataClient
+
+@app.get("/northdata/search")
+def nd_universal(q: str, domain: str = "company", limit: int = 10, countries: str | None = None):
+    try:
+        cli = NorthDataClient()
+        return cli.universal_search(query=q, domain=domain, limit=limit, countries=countries)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/northdata/publications")
+def nd_publications(
+    source: str = "bundesanzeiger",
+    minPublicationDate: str | None = None,
+    maxPublicationDate: str | None = None,
+    countries: str | None = None,
+    legalForm: str | None = None,
+    eventType: str | None = None,
+    limit: int = 20,
+    pos: str | None = None
+):
+    try:
+        cli = NorthDataClient()
+        return cli.publications(
+            source=source,
+            minPublicationDate=minPublicationDate,
+            maxPublicationDate=maxPublicationDate,
+            countries=countries,
+            legalForm=legalForm,
+            eventType=eventType,
+            limit=limit,
+            pos=pos
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

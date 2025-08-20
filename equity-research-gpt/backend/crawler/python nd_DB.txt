@@ -1,0 +1,86 @@
+from datetime import datetime, timezone
+import logging, os
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from ..db import SessionLocal, engine
+from ..models import Base, Company, Filing, IngestCursor
+from .northdata_client import NorthDataClient
+
+log = logging.getLogger("crawler.northdata")
+ND_SOURCE = "northdata"
+
+# Mappe Topic/Publication auf Filing-Typ (vereinfachte Heuristik)
+def map_topic_to_filing_type(topic: str) -> str:
+    t = (topic or "").lower()
+    if "kapital" in t or "capital" in t: return "capital_increase"
+    if "jahresabschluss" in t or "annual" in t: return "annual_report"
+    if "rechtsform" in t or "legal form" in t: return "legal_form_change"
+    return "publication"
+
+def get_cursor(db: Session) -> str | None:
+    cur = db.execute(select(IngestCursor).where(IngestCursor.source == ND_SOURCE)).scalar_one_or_none()
+    return cur.last_timestamp.isoformat() if cur and cur.last_timestamp else os.getenv("NORTHDATA_MIN_TS")
+
+def set_cursor(db: Session, ts_str: str):
+    ts = datetime.fromisoformat(ts_str.replace("Z","+00:00")).astimezone(timezone.utc)
+    cur = db.execute(select(IngestCursor).where(IngestCursor.source == ND_SOURCE)).scalar_one_or_none()
+    if not cur:
+        cur = IngestCursor(source=ND_SOURCE, last_timestamp=ts)
+        db.add(cur)
+    else:
+        cur.last_timestamp = ts
+    db.commit()
+
+def upsert_company(db: Session, name: str) -> Company:
+    row = db.execute(select(Company).where(Company.name == name)).scalar_one_or_none()
+    if row: return row
+    obj = Company(name=name, country="DE")
+    db.add(obj); db.commit(); db.refresh(obj)
+    return obj
+
+def save_publication(db: Session, comp: Company, pub: dict):
+    ext_id = str(pub.get("id") or pub.get("publicationId") or "")
+    title = pub.get("title") or pub.get("subject") or ""
+    url = pub.get("url") or pub.get("link") or None
+    topic = pub.get("topic") or pub.get("topicType") or ""
+    filing_type = map_topic_to_filing_type(topic)
+    filing_date = None
+    # prefer publicationDate; fallback to timestamp
+    if pub.get("publicationDate"):
+        filing_date = datetime.fromisoformat(pub["publicationDate"]).date()
+    elif pub.get("timestamp"):
+        filing_date = datetime.fromisoformat(pub["timestamp"].replace("Z","+00:00")).date()
+
+    exists = db.execute(
+        select(Filing).where(Filing.source==ND_SOURCE, Filing.ext_id==ext_id)
+    ).scalar_one_or_none()
+    if exists:
+        return exists
+
+    f = Filing(company_id=comp.id, source=ND_SOURCE, filing_type=filing_type,
+               filing_date=filing_date, url=url, title=title, ext_id=ext_id)
+    db.add(f); db.commit()
+    return f
+
+def run_delta():
+    Base.metadata.create_all(bind=engine)
+    client = NorthDataClient()
+    with SessionLocal() as db:
+        pos = None
+        last_ts = get_cursor(db)
+        max_seen_ts = last_ts
+        # Ziehe Bundesanzeiger-Publikationen seit letztem Cursor
+        while True:
+            res = client.publications(source="bundesanzeiger", min_ts=last_ts, pos=pos, limit=10)
+            items = (res or {}).get("publications") or (res.get("items") if res else []) or []
+            if not items: break
+            for p in items:
+                comp_name = (p.get("publisher") or {}).get("name") or p.get("companyName") or "Unbekannt"
+                comp = upsert_company(db, comp_name)
+                save_publication(db, comp, p)
+                ts = p.get("timestamp") or p.get("publicationDate")
+                if ts and (not max_seen_ts or ts > max_seen_ts): max_seen_ts = ts
+            pos = res.get("newPos") or res.get("nextPos")
+            if not pos: break
+        if max_seen_ts: set_cursor(db, max_seen_ts)
+        log.info("NorthData delta sync done. last_ts -> %s", max_seen_ts)

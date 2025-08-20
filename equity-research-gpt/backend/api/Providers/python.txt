@@ -1,0 +1,25 @@
+import os, requests
+
+NORTHDATA_BASE = os.getenv("NORTHDATA_BASE", "https://www.northdata.de/_api")
+API_KEY = os.getenv("NORTHDATA_API_KEY")
+
+class NorthDataClient:
+    def __init__(self, api_key: str | None = None, base: str | None = None):
+        self.base = base or NORTHDATA_BASE
+        self.api_key = api_key or API_KEY
+        if not self.api_key:
+            raise RuntimeError("NORTHDATA_API_KEY not set")
+
+    def _get(self, path: str, params: dict):
+        url = f"{self.base}{path}"
+        params = {"api_key": self.api_key, **{k:v for k,v in (params or {}).items() if v not in (None, "")}}
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def universal_search(self, query: str, domain: str = "company", limit: int = 10, countries: str | None = None):
+        return self._get("/search/v1/universal", {"query": query, "domain": domain, "limit": limit, "countries": countries})
+
+    def publications(self, **kwargs):
+        # Akzeptiert generische Filter wie source, minPublicationDate, maxPublicationDate, countries, legalForm, eventType, pos, limit
+        return self._get("/pub/v1/publications", kwargs)
