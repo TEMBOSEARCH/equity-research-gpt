@@ -15,6 +15,35 @@ Base.metadata.create_all(bind=engine)
 @app.get("/healthz")
 def healthz():
     return {"status": "ok"}
+    import os, re
+from fastapi import HTTPException
+from sqlalchemy import text
+from db import engine
+
+def _mask_pw(url: str) -> str:
+    # postgresql://USER:PASSWORD@host/db?...
+    return re.sub(r'(postgres(?:ql)?://[^:]+:)([^@]+)(@)',
+                  lambda m: m.group(1) + '***' + m.group(3),
+                  url)
+
+@app.get("/admin/db-check")
+def db_check():
+    db_url = os.getenv("DATABASE_URL", "")
+    if not db_url:
+        raise HTTPException(500, "DATABASE_URL missing")
+
+    # Minimal-Validierung
+    if not db_url.startswith(("postgres://", "postgresql://", "sqlite:///")):
+        raise HTTPException(500, f"Suspicious DATABASE_URL: { _mask_pw(db_url) }")
+
+    # Live-Verbindungsprobe
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        raise HTTPException(500, f"DB connect failed for { _mask_pw(db_url) }: {e}")
+
+    return {"ok": True, "database_url": _mask_pw(db_url)}
 
 # --- Crawler-Trigger (Import erst beim Aufruf, damit Start nie crasht) ---
 import os, sys
@@ -39,3 +68,4 @@ def run_crawler(limit: int = 20, token: Optional[str] = None):
     # Crawler ausführen
     run_delta(limit=limit)
     return {"status": "crawler_ok", "limit": limit}
+
